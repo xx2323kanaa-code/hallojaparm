@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>HALLO – Myoelectric Prosthesis Training</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<style>
+/* ================= BASE ================= */
+body {
+  margin:0;
+  background:#000;
+  color:#fff;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+#container {
+  position:relative;
+  width:100vw;
+  height:100vh;
+  overflow:hidden;
+}
+
+/* ================= TITLE ================= */
+#titleBar {
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  z-index:60;
+  background:rgba(0,0,0,0.6);
+  padding:6px 10px;
+  text-align:center;
+}
+#titleBar .title {
+  font-weight:700;
+}
+#titleBar .subtitle {
+  font-size:12px;
+  opacity:0.8;
+}
+
+/* ================= CAMERA ================= */
+video, canvas {
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%) scale(0.75); /* 疑似広角 */
+  transform-origin:center;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+/* ================= MENU ================= */
+#menuWrapper {
+  position:absolute;
+  top:70px;
+  right:10px;
+  z-index:80;
+}
+#menuToggle {
+  background:#444;
+  color:#fff;
+  border:none;
+  border-radius:8px;
+  font-size:18px;
+  padding:8px 12px;
+}
+#menuPanel {
+  position:absolute;
+  right:0;
+  margin-top:8px;
+  width:260px;
+  background:#333;
+  border:1px solid #555;
+  border-radius:10px;
+  padding:10px;
+}
+.hidden { display:none; }
+.menu-section { margin-bottom:10px; }
+.menu-section h3 {
+  margin:0 0 4px 0;
+  font-size:13px;
+}
+select, button.menuBtn {
+  width:100%;
+  padding:8px;
+  border-radius:8px;
+  border:1px solid rgba(255,255,255,0.2);
+  background:rgba(255,255,255,0.1);
+  color:#fff;
+}
+
+/* ================= COURSE PANEL ================= */
+#coursePanel {
+  position:absolute;
+  left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.7);
+  border-top:1px solid rgba(255,255,255,0.2);
+  padding:10px;
+  z-index:70;
+}
+#courseTitle { font-weight:700; margin-bottom:6px; }
+#courseText { font-size:14px; line-height:1.4; }
+.checkbox { margin-top:6px; }
+
+/* ================= CONTROL BUTTONS ================= */
+#controlButtons {
+  margin-top:8px;
+}
+#controlButtons button {
+  margin-right:6px;
+  padding:8px 14px;
+  font-size:16px;
+  border-radius:8px;
+  border:none;
+  background:#666;
+  color:#fff;
+}
+
+/* ================= HUD ================= */
+#debugHud {
+  position:absolute;
+  top:70px;
+  left:10px;
+  right:10px;
+  max-height:65vh;
+  overflow:auto;
+  background:rgba(0,0,0,0.85);
+  border:1px solid rgba(255,255,255,0.25);
+  border-radius:10px;
+  padding:10px;
+  z-index:100;
+  font-family:monospace;
+  font-size:12px;
+}
+#debugHud.hidden { display:none; }
+#debugHudHeader {
+  display:flex;
+  justify-content:space-between;
+  margin-bottom:6px;
+}
+pre { white-space:pre-wrap; }
+</style>
+</head>
+
+<body>
+<div id="container">
+
+  <!-- TITLE -->
+  <div id="titleBar">
+    <div class="title">HALLO</div>
+    <div class="subtitle">
+      Myoelectric prosthesis training for body-image and muscle control
+    </div>
+  </div>
+
+  <!-- CAMERA -->
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="overlay"></canvas>
+
+  <!-- MENU -->
+  <div id="menuWrapper">
+    <button id="menuToggle">☰</button>
+    <div id="menuPanel" class="hidden">
+
+      <div class="menu-section">
+        <h3>Camera</h3>
+        <select id="cameraFacing">
+          <option value="environment">Back</option>
+          <option value="user">Front</option>
+        </select>
+      </div>
+
+      <div class="menu-section">
+        <h3>Amputation side (yellow)</h3>
+        <select id="ampSide">
+          <option value="right">Right</option>
+          <option value="left">Left</option>
+        </select>
+      </div>
+
+      <div class="menu-section">
+        <h3>Course</h3>
+        <button class="menuBtn" id="btnBeginner">Beginner</button>
+        <button class="menuBtn" id="btnIntermediate" style="margin-top:6px;">Intermediate</button>
+      </div>
+
+      <div class="menu-section">
+        <h3>Debug</h3>
+        <button class="menuBtn" id="btnDebug">Toggle DEBUG HUD</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- COURSE PANEL -->
+  <div id="coursePanel" class="hidden">
+    <div id="courseTitle"></div>
+    <div id="courseText"></div>
+    <div id="controlButtons"></div>
+  </div>
+
+  <!-- HUD -->
+  <div id="debugHud" class="hidden">
+    <div id="debugHudHeader">
+      <strong>HALLO DEBUG HUD</strong>
+      <button onclick="debugHud.classList.add('hidden')">Close</button>
+    </div>
+    <pre id="debugText"></pre>
+  </div>
+
+</div>
+
+<script>
+/* ================= STATE ================= */
+let flexState = 0; // 0 extend / 1 flex
+let lastInput = '-';
+let course = 'none';
+let voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+let recognition = null;
+
+/* ================= MENU ================= */
+menuToggle.onclick = () => menuPanel.classList.toggle('hidden');
+
+/* ================= CAMERA ================= */
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+let stream = null;
+
+async function startCamera(){
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:{ ideal: cameraFacing.value }},
+    audio:false
+  });
+  video.srcObject = stream;
+}
+cameraFacing.onchange = startCamera;
+startCamera();
+
+/* ================= DRAWING ================= */
+function draw(){
+  overlay.width = overlay.clientWidth;
+  overlay.height = overlay.clientHeight;
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+
+  const W = overlay.width;
+  const H = overlay.height;
+  const L = Math.min(W,H)*0.7;
+  const cx = W/2;
+  const top = H/2 - L/2;
+  const bottom = H/2 + L/2;
+
+  const shoulderY = top + L/5;
+  const half = L/2;
+  const armLen = L*0.4;
+  const elbowR = L*0.03;
+
+  ctx.lineWidth = 4;
+
+  // torso
+  ctx.strokeStyle="rgba(255,255,255,0.35)";
+  ctx.beginPath();
+  ctx.moveTo(cx,top);
+  ctx.lineTo(cx,bottom);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx-half,shoulderY);
+  ctx.lineTo(cx+half,shoulderY);
+  ctx.stroke();
+
+  function arm(side){
+    const isRight = side==="right";
+    const sx = isRight ? cx+half : cx-half;
+    const isAmp = ampSide.value===side;
+    const color = isAmp ? "yellow" : "white";
+    ctx.strokeStyle=color;
+
+    ctx.beginPath();
+    ctx.moveTo(sx,shoulderY);
+    ctx.lineTo(sx,shoulderY+armLen);
+    ctx.stroke();
+
+    const ex = sx;
+    const ey = shoulderY+armLen;
+    ctx.beginPath();
+    ctx.arc(ex,ey,elbowR,0,Math.PI*2);
+    ctx.stroke();
+
+    const hy = ey - flexState*armLen*0.8;
+
+    const open = flexState ? 15 : 40;
+    const dir = isRight ? -1 : 1;
+
+    ctx.beginPath();
+    ctx.moveTo(ex,hy);
+    ctx.lineTo(
+      ex + dir*Math.cos((90-open)*Math.PI/180)*elbowR*5,
+      hy + Math.sin((90-open)*Math.PI/180)*elbowR*5
+    );
+    ctx.moveTo(ex,hy);
+    ctx.lineTo(
+      ex + dir*Math.cos((90+open)*Math.PI/180)*elbowR*5,
+      hy + Math.sin((90+open)*Math.PI/180)*elbowR*5
+    );
+    ctx.stroke();
+  }
+
+  arm("left");
+  arm("right");
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* ================= COURSES ================= */
+btnBeginner.onclick = ()=>{
+  stopVoice();
+  course="beginner";
+  flexState=0;
+  coursePanel.classList.remove('hidden');
+  courseTitle.textContent="Beginner course";
+  courseText.innerHTML=
+`Bend your elbow. The muscle that rises is the <b>biceps</b>.<br>
+Extend your elbow. The muscle that rises is the <b>triceps</b>.<br>
+Mark the same points on both arms.`;
+  controlButtons.innerHTML=
+`<div class="checkbox"><label><input type="checkbox"> I feel the biceps</label></div>
+ <div class="checkbox"><label><input type="checkbox"> I feel the triceps</label></div>`;
+  menuPanel.classList.add('hidden');
+};
+
+btnIntermediate.onclick = ()=>{
+  course="intermediate";
+  coursePanel.classList.remove('hidden');
+  courseTitle.textContent="Intermediate course";
+  courseText.innerHTML=
+`Say "one" or press 1 for <b>biceps</b>.<br>
+Say "two" or press 2 for <b>triceps</b>.`;
+  controlButtons.innerHTML=
+`<button onclick="manual(1)">1</button>
+ <button onclick="manual(2)">2</button>`;
+  startVoice();
+  menuPanel.classList.add('hidden');
+};
+
+function manual(n){
+  lastInput="manual "+n;
+  flexState = n===1 ? 1 : 0;
+}
+
+/* ================= VOICE ================= */
+function startVoice(){
+  stopVoice();
+  if(!voiceSupported) return;
+  const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+  recognition = new SR();
+  recognition.lang="en-US";
+  recognition.continuous=false;
+  recognition.onresult=e=>{
+    const t=e.results[0][0].transcript.toLowerCase();
+    lastInput="voice "+t;
+    if(t.includes("one")) flexState=1;
+    if(t.includes("two")) flexState=0;
+  };
+  recognition.onend=()=>{ if(course==="intermediate") recognition.start(); };
+  recognition.start();
+}
+function stopVoice(){
+  if(recognition){ recognition.stop(); recognition=null; }
+}
+
+/* ================= HUD ================= */
+btnDebug.onclick = ()=>{
+  debugHud.classList.toggle('hidden');
+};
+setInterval(()=>{
+  debugText.textContent =
+`Device:
+  UA: ${navigator.userAgent}
+  SecureContext: ${window.isSecureContext}
+
+Camera:
+  Facing: ${cameraFacing.value}
+  Pseudo-wide: ON (0.75)
+
+Program:
+  Course: ${course}
+  Amputation: ${ampSide.value}
+  Elbow: ${flexState ? "flex" : "extend"}
+
+Input:
+  LastInput: ${lastInput}
+
+Voice:
+  Supported: ${voiceSupported}`;
+},300);
+</script>
+</body>
+</html>
